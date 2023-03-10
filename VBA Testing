@@ -1,0 +1,81 @@
+# Create a new thread to run the dialog window
+$openFileDialogThread = [System.Threading.Thread]::new({
+    # Create an instance of the OpenFileDialog class
+    $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $openFileDialog.Filter = "Excel Workbook (*.xlsx)|*.xlsx"
+    $openFileDialog.Multiselect = $true
+
+    # Show the dialog window and return the selected file paths
+    if ($openFileDialog.ShowDialog() -eq 'OK') {
+        $selectedFiles = $openFileDialog.FileNames
+    }
+    else {
+        $selectedFiles = @()
+    }
+
+    # Close the dialog window
+    $openFileDialog.Dispose()
+
+    # Output the selected file paths
+    $selectedFiles
+})
+$openFileDialogThread.SetApartmentState("STA")
+$openFileDialogThread.Start() | Out-Null
+
+# Wait for the dialog window to close and get the selected file paths
+while ($openFileDialogThread.IsAlive) {
+    [System.Windows.Forms.Application]::DoEvents()
+}
+$filePaths = $openFileDialogThread.Join()
+
+# Check if any files were selected
+if ($filePaths.Count -eq 0) {
+    Write-Host "No files selected." -ForegroundColor Yellow
+    return
+}
+
+# Create a new Excel application
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+
+# Create a new workbook to store the combined data
+$combinedWorkbook = $excel.Workbooks.Add()
+
+# Loop through all selected Excel files and sheets
+foreach ($filePath in $filePaths) {
+    # Open the Excel file
+    $sourceWorkbook = $excel.Workbooks.Open($filePath)
+
+    # Loop through all sheets in the file
+    foreach ($sheet in $sourceWorkbook.Sheets) {
+        # Read the data from the sheet
+        $lastRow = $sheet.UsedRange.Rows.Count
+        if ($lastRow -ge 1) {
+            $sourceData = $sheet.Range("B1:B$lastRow").Value2
+            
+            # Create a new worksheet in the combined workbook for the sheet
+            $combinedSheet = $combinedWorkbook.Sheets.Add()
+            $combinedSheet.Name = $sheet.Name
+            
+            # Copy the data to the new worksheet
+            $combinedSheet.Range("A1:A$lastRow").Value2 = $sourceData
+            
+            # Auto-fit the columns in the new worksheet
+            $combinedSheet.UsedRange.Columns.AutoFit() | Out-Null
+        }
+    }
+    
+    # Close the source workbook
+    $sourceWorkbook.Close($false)
+}
+
+# Save the combined workbook
+$combinedDataWorkbookName = "CombinedData.xlsx"
+$combinedWorkbook.SaveAs($combinedDataWorkbookName)
+
+# Close the combined workbook and Excel application
+$combinedWorkbook.Close($false)
+$excel.Quit()
+
+Write-Host "Combined data from $($filePaths.Count) files written to $combinedDataWorkbookName." -ForegroundColor Green
